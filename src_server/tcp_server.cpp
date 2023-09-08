@@ -53,7 +53,7 @@ using enum Debug::Level;
             cookie[ 9] = ('0'+(r&7)) & 255;  r >>= 3;
             cookie[10] = ('0'+(r&7)) & 255;  r >>= 3;
             cookie[11] = ('0'+(r&7)) & 255;
-            cookieU64 = simplehash_x86_64(cookie.c_str(), (int)cookie.size());
+            cookieU64 = simplehash(cookie.c_str(), (int)cookie.size());
         }
     };
 
@@ -215,7 +215,7 @@ using enum Debug::Level;
             return;
         needle = needle.substr(cookiePos);
         needle.substr(0, needle.find(PROTECTED("\r\n\r\n")));
-        const enc_u64 needleU64 = simplehash_x86_64(needle.data(), (int)needle.size());
+        const enc_u64 needleU64 = simplehash(needle.data(), (int)needle.size());
 
         [&guests, needleU64, &currentGuest, &guests_lock]
         {

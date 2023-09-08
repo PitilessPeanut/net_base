@@ -21,9 +21,9 @@
 
 
 /****************************************/
-/*                 simplyfied meow_hash */
+/*                  some hash functions */
 /****************************************/
-    enc_u64 simplehash_x86_64(const char *str, enc_u32 len);
+    enc_u64 simplehash(const char *str, enc_u32 len);
 
 
 /****************************************/

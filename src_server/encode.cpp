@@ -9,7 +9,7 @@
 /* github.com/cmuratori/meow_hash       */
 /* (zlib License!)                      */
 /****************************************/
-    enc_u64 simplehash_x86_64(const char *str, enc_u32 len)
+    enc_u64 simplemeow_x86_64(const char *str, enc_u32 len)
     {
         static const unsigned char restMask[32] =
             { 255,255,255,255, 255,255,255,255, 255,255,255,255, 255,255,255,255,
@@ -45,6 +45,11 @@
         hashValue = _mm_aesdec_si128(hashValue, _mm_setzero_si128());
         
         return _mm_extract_epi64(hashValue, 0) ^ _mm_extract_epi64(hashValue, 1);
+    }
+
+    enc_u64 simplehash(const char *str, enc_u32 len)
+    {
+        return simplemeow_x86_64(str, len);
     }
 
 

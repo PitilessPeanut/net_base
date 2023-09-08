@@ -3,10 +3,6 @@
 protect_strings = "DO_PROTECT_STRINGS=1"
 remove_strings =  "DO_REMOVE_STRINGS=0"
 
-nix_buildoptions = { "-Wfatal-errors", -- make gcc output bearable
-                     "-pedantic"
-                   }
-
 workspace "Gaem"
         configurations { "Debug", "Release" }
         architecture "x86_64"
@@ -43,16 +39,18 @@ workspace "Gaem"
 
 
 
-                ignoreNaN = "-ffinite-math-only"
-                addAddressSanitize = "-fsanitize=address" -- "undefined reference"
-                utf8compiler = "-finput-charset=UTF-8 -fexec-charset=UTF-8 -fextended-identifiers"
+
+                nix_buildoption_ignoreNaN = "-ffinite-math-only"
+                nix_buildoption_addAddressSanitize = "-fsanitize=address" -- "undefined reference"
+                nix_buildoption_utf8compiler = "-finput-charset=UTF-8 -fexec-charset=UTF-8 -fextended-identifiers"
+                nix_buildoption_fatal = "-Wfatal-errors" -- make gcc output bearable
                         
                 filter { "system:ios" }
                         exceptionhandling "Off"
-                        buildoptions = table.merge({ "-ffast-math"
-                                                   },
-                                                   nix_buildoptions
-                                                  )
+                        buildoptions { "-ffast-math"
+                                     , "-pedantic"
+                                     , nix_buildoption_fatal
+                                     }
                         defines { protect_strings,
                                   remove_strings
                                 }
@@ -65,13 +63,12 @@ workspace "Gaem"
 
 
                 filter { "system:linux" }
-                        buildoptions = table.merge({ "-march=native"
-                                                   , "-pedantic"
-                                                   , "-ffast-math"
-                                                   , utf8compiler
-                                                   },
-                                                   nix_buildoptions
-                                                  )
+                        buildoptions { "-march=native"
+                                     , "-pedantic"
+                                     , "-ffast-math"
+                                     , nix_buildoption_utf8compiler
+                                     , nix_buildoption_fatal
+                                     }
                         defines { protect_strings,
                                   remove_strings
                                 }
