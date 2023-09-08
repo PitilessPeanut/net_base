@@ -1,1 +1,6 @@
-#test
+# ignored:
+build_android
+build_ios
+build_linux
+build_win
+
