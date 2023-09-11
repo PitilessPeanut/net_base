@@ -60,7 +60,7 @@
         
         virtual bool found() const = 0;
 
-        bool maxLenExceeded(int) const {return false;}
+        bool maxLenExceeded(int) const {return false;}//todo
 
         virtual bool delivered() const = 0;
 
@@ -80,26 +80,52 @@
     {
     public:
         static constexpr int max_concurrent_connections = 1000;
-        
-    private:
+
         struct TcpServerMembers;
+        
+    protected:
         TcpServerMembers *pTcpServerMembers;
 
         Page_base *page_base;
 
+    private:
         void doAccept();
         
     public:
-        TcpServer(void *global, Page_base *page);
+        TcpServer(void *global, Page_base *page, const char *address, const unsigned short port);
         
         TcpServer(const TcpServer&) = delete;
         TcpServer& operator=(const TcpServer&) = delete;
 
-        void go();
+        virtual void go();
 
         void shutdown();
         
-        ~TcpServer();
+        virtual ~TcpServer();
+    };
+
+
+    class TcpServerSSL : public TcpServer
+    {
+    private:
+        struct SSL_Container;
+        SSL_Container *pSSL_Container;
+        
+        void doAcceptSSL();
+        
+    public:
+        TcpServerSSL( void *global
+                    , Page_base *page
+                    , const char *address
+                    , const unsigned short port
+                    , const char *chain_file, const char *key_file, const char *dh_file
+                    );
+
+        void go() override;
+        
+        void refreshSSL(const char *chain_file, const char *key_file, const char *dh_file);
+        
+        ~TcpServerSSL();
     };
 
 

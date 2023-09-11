@@ -4,6 +4,7 @@
 #include "../src/platform.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/beast/ssl.hpp>
 #include <boost/algorithm/string.hpp>
 
 using std::vector;
@@ -19,6 +20,7 @@ using std::mutex;
 using std::lock_guard;
 namespace asio = boost::asio;
 namespace beast = boost::beast;
+namespace ssl = boost::asio::ssl;
 namespace chrono = std::chrono;
 using enum Debug::Level;
 
@@ -138,6 +140,11 @@ using enum Debug::Level;
         string& dst2 = *(string *)dst;
         string body;
         placeChunk(&body);
+        
+        std::string_view body1{body};
+        body1 = body1.substr(0,12);
+        
+        Debug::print("bdy: ", body1.size());
         
         if (sendHeader)
         {        
@@ -409,6 +416,48 @@ using enum Debug::Level;
             return INDETERMINATE;        
         }
         
+        void handshake()
+        {
+            beast::get_lowest_layer(stream).expires_after(std::chrono::seconds(11));
+            
+            shared_ptr<HttpSession<Sockettype>> self = this->shared_from_this();
+            auto handleHandshake = [this, self](beast::error_code ec)
+                                   {
+                                       // ssl::error::stream_truncated, also known as an SSL "short read",
+                                       // indicates the peer closed the connection without performing the
+                                       // required closing handshake (for example, Google does this to
+                                       // improve performance). Generally this can be a security issue,
+                                       // but if your communication protocol is self-terminated (as
+                                       // it is with both HTTP and WebSocket) then you may simply
+                                       // ignore the lack of close_notify.
+                                       //
+                                       // https://github.com/boostorg/beast/issues/38
+                                       //
+                                       // https://security.stackexchange.com/questions/91435/how-to-handle-a-malicious-ssl-tls-shutdown
+                                       //
+                                       // When a short read would cut off the end of an HTTP message,
+                                       // Beast returns the error beast::http::error::partial_message.
+                                       // Therefore, if we see a short read here, it has occurred
+                                       // after the message has been completed, so it is safe to ignore it.
+
+                                       if (ec == asio::ssl::error::stream_truncated) // Don't print error when this happens
+                                           return;
+                                       
+                                       if (ec)
+                                           return Debug::print( warning
+                                                              , DBGSTR("HttpSession<Sockettype>::handshake() failed: ")
+                                                              , ec.message().c_str()
+                                                              , ", code: "
+                                                              , ec.value()
+                                                              );
+                                       
+                                       self->doReadSome();
+                                   };
+            
+            // SSL "handshake"
+            stream.async_handshake(ssl::stream_base::server, handleHandshake);
+        }
+        
         void doReadSome()
         {
             fill(buffer.begin(), buffer.end(), 0); // Prevent inf loop
@@ -442,7 +491,7 @@ using enum Debug::Level;
                                       move( buffer.begin()                // Move contents from read buffer
                                           , buffer.begin() + headerLength // to the received vch. Number of
                                           , back_inserter(receivedHeader) // bytes == header size
-                                          ); 
+                                          );
                                       
                                       // Quickly find requested page:
                                       if ((page->found()==false) && (receivedHeader.size()>128))
@@ -481,7 +530,7 @@ using enum Debug::Level;
 
                                   //  G E T  //
                                   if (method == GET)
-                                  {                                 
+                                  {
                                       #ifdef STOPWATCH
                                         now = chrono::high_resolution_clock::now();
                                       #endif
@@ -541,7 +590,7 @@ using enum Debug::Level;
 
                                       /*if (bodyLength == 0)
                                       {
-                                      Debug::print("3333 ", receivedBody.size(), "  ", bodyLength, " ", receivedHeader.c_str());
+                                      Debug::print("f ", receivedBody.size(), "  ", bodyLength, " ", receivedHeader.c_str());
                                           page->submitBody(receivedBody.c_str(), (int)receivedBody.size());
                                           self->doWrite();
                                       }*/
@@ -598,7 +647,7 @@ using enum Debug::Level;
             boost::beast::get_lowest_layer(stream).expires_after(std::chrono::seconds(timeout));
     
             standby = 0;
-
+            
             stream.async_read_some(asio::buffer(buffer, buffer.size()), handleRead);
         }
 
@@ -645,19 +694,18 @@ using enum Debug::Level;
                                };
 
             const int timeout = std::min(10, (TcpServer::max_concurrent_connections/(nCurrentConnected+1)) + 7);
-            boost::beast::get_lowest_layer(stream).expires_after(std::chrono::seconds(timeout));
+            beast::get_lowest_layer(stream).expires_after(std::chrono::seconds(timeout));
 
             page->buffers(&out, *guest, httpCode);
-         
-            // write lock  
-            async_write(stream, asio::buffer(out), handleWrite);  
-
+            
+            // write lock
+            async_write(stream, asio::buffer(out), handleWrite);
         }
         
         void doClose()
         {
             beast::error_code ec;
-            stream.socket().shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+            beast::get_lowest_layer(stream).socket().shutdown(asio::ip::tcp::socket::shutdown_send, ec);
         }
         
     public:
@@ -673,6 +721,25 @@ using enum Debug::Level;
                    )
           : ioContext(ioCtx)
           , stream(move(sock))
+          , buffer(4096)
+          , nCurrentConnected(connected)
+          , page(page_base->createNew())
+          , guests_lock(lock)
+          , guests(g)
+          , guest(newguest)
+        {}
+        
+        HttpSession( asio::io_context& ioCtx
+                   , asio::ip::tcp::socket&& sock
+                   , asio::ssl::context& sslCtx
+                   , std::atomic_int& connected
+                   , std::mutex& lock
+                   , vector<Guest>& g
+                   , Page_base *page_base
+                   , Guest *newguest
+                   )
+          : ioContext(ioCtx)
+          , stream(move(sock), sslCtx)
           , buffer(4096)
           , nCurrentConnected(connected)
           , page(page_base->createNew())
@@ -700,9 +767,15 @@ using enum Debug::Level;
         void start()
         {
             shared_ptr<HttpSession<Sockettype>> self = this->shared_from_this();
-            asio::dispatch( stream.get_executor(), [self]{ self->doReadSome(); });
+            asio::dispatch(stream.get_executor(), [self]{ self->doReadSome(); });
         }
-
+        
+        void startSSL()
+        {
+            shared_ptr<HttpSession<Sockettype>> self = this->shared_from_this();
+            asio::dispatch(stream.get_executor(), [self]{ self->handshake(); });
+        }
+        
         void reset()
         {
             totalReceived = 0;
@@ -747,17 +820,18 @@ using enum Debug::Level;
         {}
     };
 
-    void TcpServer::doAccept()
+    template <class Sockettype, bool DoSSL>
+    void doAccept_impl(TcpServer::TcpServerMembers *pTcpServerMembers, Page_base *page_base, asio::ssl::context *psslCtx=nullptr)
     {
         if (!pTcpServerMembers->acceptor.is_open())
             return;
 
-        auto accept = [this](beast::error_code ec, asio::ip::tcp::socket sock)
+        auto accept = [pTcpServerMembers, page_base, psslCtx](beast::error_code ec, asio::ip::tcp::socket sock)
                       {
                           if (!ec)
                           {
                               // todo: block ip!
-                              Guest *newguest = [this]
+                              Guest *newguest = [pTcpServerMembers]
                                                 {
                                                     const lock_guard<mutex> lock(pTcpServerMembers->guests_lock);
                                                     for (auto& guest : pTcpServerMembers->guests)
@@ -774,16 +848,33 @@ using enum Debug::Level;
                                                 }();
                               
                               pTcpServerMembers->nCurrentConnected += 1;
-                              shared_ptr<HttpSession<beast::tcp_stream>> spawn = 
-                                  make_shared<HttpSession<beast::tcp_stream>>( pTcpServerMembers->ioContext
-                                                                             , move(sock)
-                                                                             , pTcpServerMembers->nCurrentConnected
-                                                                             , pTcpServerMembers->guests_lock
-                                                                             , pTcpServerMembers->guests
-                                                                             , page_base
-                                                                             , newguest
-                                                                             );
-                              spawn->start();
+                              shared_ptr<HttpSession<Sockettype>> spawn;
+                              
+                              if constexpr (DoSSL)
+                              {
+                                  spawn = make_shared<HttpSession<Sockettype>>( pTcpServerMembers->ioContext
+                                                                              , move(sock)
+                                                                              , *psslCtx
+                                                                              , pTcpServerMembers->nCurrentConnected
+                                                                              , pTcpServerMembers->guests_lock
+                                                                              , pTcpServerMembers->guests
+                                                                              , page_base
+                                                                              , newguest
+                                                                              );
+                                  spawn->startSSL();
+                              }
+                              else
+                              {
+                                  spawn = make_shared<HttpSession<Sockettype>>( pTcpServerMembers->ioContext
+                                                                              , move(sock)
+                                                                              , pTcpServerMembers->nCurrentConnected
+                                                                              , pTcpServerMembers->guests_lock
+                                                                              , pTcpServerMembers->guests
+                                                                              , page_base
+                                                                              , newguest
+                                                                              );
+                                  spawn->start();
+                              }
 
 
  
@@ -836,16 +927,20 @@ using enum Debug::Level;
                           {
                               Debug::print(warning, DBGSTR("TcpServer::doAccept(): "), ec.message().c_str());
                           }
-
-                          doAccept(); // Another connection
+                          
+                          doAccept_impl<Sockettype, DoSSL>(pTcpServerMembers, page_base, psslCtx); // Another connection
                       };
 
-        pTcpServerMembers->acceptor.async_accept( asio::make_strand(pTcpServerMembers->ioContext)
-                                                , accept
-                                                );
+        pTcpServerMembers->acceptor.async_accept(asio::make_strand(pTcpServerMembers->ioContext), accept);
     }
     
-    TcpServer::TcpServer(void *global, Page_base *page)
+
+    void TcpServer::doAccept()
+    {
+        doAccept_impl<beast::tcp_stream, false>(pTcpServerMembers, page_base);
+    }
+
+    TcpServer::TcpServer(void *global, Page_base *page, const char *address, const unsigned short port)
       : pTcpServerMembers(new TcpServerMembers( ((Global *)global)->ioContext, ((Global *)global)->nCurrentConnected ))
       , page_base(page)
     {
@@ -857,9 +952,7 @@ using enum Debug::Level;
                //                                     );
 
                                                                           
-        const auto address = asio::ip::make_address(PROTECTED("127.0.0.1"));
-        const unsigned short port = 8080;
-        asio::ip::tcp::endpoint endpoint{address, port};
+        asio::ip::tcp::endpoint endpoint{asio::ip::make_address(address), port};
         beast::error_code ec;
         for (;;)
         {
@@ -901,3 +994,61 @@ using enum Debug::Level;
             delete pTcpServerMembers;
     }
 
+
+
+
+    struct TcpServerSSL::SSL_Container
+    {
+        asio::ssl::context    sslCtx;
+        
+        SSL_Container()
+          : sslCtx{asio::ssl::context::tlsv12}
+        {}
+    };
+
+    void TcpServerSSL::doAcceptSSL()
+    {
+        doAccept_impl<beast::ssl_stream<beast::tcp_stream>, true>(pTcpServerMembers, page_base, &pSSL_Container->sslCtx);
+    }
+
+    TcpServerSSL::TcpServerSSL( void *global
+                              , Page_base *page
+                              , const char *address
+                              , const unsigned short port
+                              , const char *chain_file, const char *key_file, const char *dh_file
+                              )
+      : TcpServer(global, page, address, port)
+      , pSSL_Container( new SSL_Container() )
+    {
+        refreshSSL(chain_file, key_file, dh_file);
+    }
+
+    void TcpServerSSL::go()
+    {
+        asio::dispatch( pTcpServerMembers->acceptor.get_executor()
+                      , beast::bind_front_handler(&TcpServerSSL::doAcceptSSL, this)
+                      );
+    }
+
+    void TcpServerSSL::refreshSSL(const char *chain_file, const char *key_file, const char *dh_file)
+    {
+        // todo: to refresh a cert keep 2 copies and swap pointer bbtwn old/new!
+        pSSL_Container->sslCtx.set_password_callback([](std::size_t, asio::ssl::context_base::password_purpose)
+                                                     {
+                                                         return PROTECTED("blah");
+                                                     }
+                                                    );
+        pSSL_Container->sslCtx.set_options( asio::ssl::context::default_workarounds
+                                          | asio::ssl::context::no_sslv2
+                                          | asio::ssl::context::single_dh_use
+                                          );
+        pSSL_Container->sslCtx.use_certificate_chain_file(chain_file);
+        pSSL_Container->sslCtx.use_private_key_file(key_file, asio::ssl::context::pem);
+        pSSL_Container->sslCtx.use_tmp_dh_file(dh_file);
+    }
+
+    TcpServerSSL::~TcpServerSSL()
+    {
+        if (pSSL_Container)
+            delete pSSL_Container;
+    }
