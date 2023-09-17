@@ -24,7 +24,7 @@ namespace ssl = boost::asio::ssl;
 namespace chrono = std::chrono;
 using enum Debug::Level;
 
-#define STOPWATCH
+//#define STOPWATCH
 
 
 /*****************************************************************************/
@@ -33,18 +33,17 @@ using enum Debug::Level;
     struct Guest::GuestMembers
     {
         u64                     cookieU64;
-        AtomicFlag              busy;
+        //AtomicBool              chunking;
         asio::deadline_timer    zombieClock;
         string                  cookie;
     
         explicit GuestMembers(asio::io_context& ioCtx)
-          : //busy(AtomicFlag>())
-           zombieClock(ioCtx)
+          : //chunking(false)
+            zombieClock(ioCtx)
           , cookie("c=          ") // Must have '=' somewhere!!
         {
             auto r = pcg64Rand();
-            // All letters in the cookie-string are converted to lower-case
-            // to speed things up
+            // All letters in the cookie-string are converted to lower-case to speed things up
             cookie[ 2] = ('0'+(r&7)) & 255;  r >>= 3;
             cookie[ 3] = ('0'+(r&7)) & 255;  r >>= 3;
             cookie[ 4] = ('0'+(r&7)) & 255;  r >>= 3;
@@ -61,12 +60,12 @@ using enum Debug::Level;
 
     Guest::Guest(void *ioCtx)
       : pGuestMembers(new GuestMembers( *(asio::io_context *)ioCtx )) 
-      , userid(0)
+      , guestid(0)
     {}
 
     Guest::Guest(Guest&& other)
       : pGuestMembers(std::exchange(other.pGuestMembers, nullptr))
-      , userid(other.userid)
+      , guestid(std::exchange(other.guestid, 0))
       , keepalive(std::exchange(other.keepalive, false))
       , deflateSupported(std::exchange(other.deflateSupported, false))
     {}
@@ -99,7 +98,8 @@ using enum Debug::Level;
         void placeType(Page_base::Mime m)  { using enum Page_base::Mime;
                                              chunk << PROTECTED("Content-Type: ");
                                              switch (m)
-                                             { 
+                                             {
+                                                 case HTM :
                                                  case HTML: { chunk << PROTECTED("text/html"); } break;
                                                  case CSS : { chunk << PROTECTED("text/css"); } break;
                                                  case JS  : { chunk << PROTECTED("application/javascript"); } break;
@@ -107,7 +107,8 @@ using enum Debug::Level;
                                                  case ICON: { chunk << PROTECTED("image/vnd.microsoft.icon"); } break;
                                                  case PNG : { chunk << PROTECTED("image/png"); } break;
                                                  case FLV : { chunk << PROTECTED("video/x-flv"); } break;
-                                                 case JPG : { chunk << PROTECTED("image/jpeg"); } break;
+                                                 case JPG :
+                                                 case JPEG: { chunk << PROTECTED("image/jpeg"); } break;
                                                  case GIF : { chunk << PROTECTED("image/gif"); } break;
                                                  case SVG : { chunk << PROTECTED("image/svg+xml"); } break;
                                                  default  : { chunk << PROTECTED("application/text"); }
@@ -140,11 +141,6 @@ using enum Debug::Level;
         string& dst2 = *(string *)dst;
         string body;
         placeChunk(&body);
-        
-        std::string_view body1{body};
-        body1 = body1.substr(0,12);
-        
-        Debug::print("bdy: ", body1.size());
         
         if (sendHeader)
         {        
@@ -209,7 +205,7 @@ using enum Debug::Level;
 
     inline void restoreUser( asio::io_context& ioContext
                            , vector<Guest>& guests
-                           , Guest *& currentGuest
+                           , Guest& currentGuest
                            , const string& receivedHeader
                            , mutex& guests_lock
                            )
@@ -231,16 +227,16 @@ using enum Debug::Level;
             {
                 if (needleU64 == guest.pGuestMembers->cookieU64)
                 {
-                    if (&guest == currentGuest)
+                    if (&guest == &currentGuest)
                         return;
-                    currentGuest->swap(guest);
+                    currentGuest.swap(guest);
                     Debug::print(trace, DBGSTR("restoreUser(): guest found (todo removeme)"));
                     return;
                 }
             }
         }();
 
-        for (Guest& guest : guests) // todo chk empty slot (userid == 0)
+        for (Guest& guest : guests) // todo chk empty slot (guestid == 0)
         {
             if (false)
             {
@@ -381,6 +377,7 @@ using enum Debug::Level;
         unique_ptr<Page_base>    page;
         std::mutex&              guests_lock;
         vector<Guest>&           guests;
+        AtomicBool&              running;
 
         #ifdef STOPWATCH
           std::chrono::high_resolution_clock::time_point now;
@@ -443,12 +440,12 @@ using enum Debug::Level;
                                        if (ec == asio::ssl::error::stream_truncated) // Don't print error when this happens
                                            return;
                                        
-                                       if (ec)
+                                       if (ec.value() == 167773206) // Self-signed cert, not an error!
+                                           Debug::print(attention, "HttpSession<Sockettype>::handshake(): Unknown cert, ", ec.message().c_str());
+                                       else if (ec)
                                            return Debug::print( warning
                                                               , DBGSTR("HttpSession<Sockettype>::handshake() failed: ")
                                                               , ec.message().c_str()
-                                                              , ", code: "
-                                                              , ec.value()
                                                               );
                                        
                                        self->doReadSome();
@@ -460,6 +457,9 @@ using enum Debug::Level;
         
         void doReadSome()
         {
+            if (running == false)
+                return;
+            
             fill(buffer.begin(), buffer.end(), 0); // Prevent inf loop
 
             shared_ptr<HttpSession<Sockettype>> self = this->shared_from_this();
@@ -474,7 +474,7 @@ using enum Debug::Level;
                                   if (ec && (!timedOut) && (!aborted) && (!eof))
                                   {
                                       doClose();
-                                      return Debug::print(warning, DBGSTR("HttpSession::doReadSome(): "), ec.message().c_str());
+                                      return Debug::print(trace, DBGSTR("HttpSession::doReadSome(): "), ec.message().c_str());
                                   }
 
                                   using enum Method;
@@ -539,11 +539,11 @@ using enum Debug::Level;
                                       
                                       restoreUser(ioContext, guests, guest, receivedHeader, guests_lock);
                                      
-                                      if (guest->keepalive == false)
+                                      if (guest.keepalive == false)
                                       {
                                           if (checkKeepalive(receivedHeader))
                                           {
-                                              guest->keepalive = true;
+                                              guest.keepalive = true;
                                               boost::beast::get_lowest_layer(stream).socket().set_option(asio::socket_base::keep_alive(true));
                                               const int timeout = std::min(90, (TcpServer::max_concurrent_connections/(nCurrentConnected.load(std::memory_order_relaxed)+1)) + 15);
                                               boost::beast::get_lowest_layer(stream).expires_after(std::chrono::seconds(timeout));
@@ -570,10 +570,10 @@ using enum Debug::Level;
                                       
                                       restoreUser(ioContext, guests, guest, receivedHeader, guests_lock);
                                       
-                                      if (guest->keepalive == false)
+                                      if (guest.keepalive == false)
                                           if (checkKeepalive(receivedHeader))
                                           {
-                                              guest->keepalive = true;
+                                              guest.keepalive = true;
                                               boost::beast::get_lowest_layer(stream).socket().set_option(asio::socket_base::keep_alive(true));
                                               // If post, reset expires timer to like 120 sec
                                               const int timeout = std::min(120, (TcpServer::max_concurrent_connections/(nCurrentConnected.load(std::memory_order_relaxed)+1)) + 15);
@@ -677,12 +677,12 @@ using enum Debug::Level;
                                    
                                    if (page->delivered() == false)
                                        doWrite();
-                                   else if (guest->keepalive)
+                                   else if (guest.keepalive)
                                    {
                                        #ifdef STOPWATCH
                                          Debug::print( trace, DBGSTR("HttpSession<Sockettype>::doWrite() elapsed: ")
                                                      , (int)duration_cast<chrono::microseconds>(chrono::high_resolution_clock::now()-now).count()
-                                                     , DBGSTR(" µs") 
+                                                     , DBGSTR(" µs")
                                                      );
                                        #endif
 
@@ -696,9 +696,8 @@ using enum Debug::Level;
             const int timeout = std::min(10, (TcpServer::max_concurrent_connections/(nCurrentConnected+1)) + 7);
             beast::get_lowest_layer(stream).expires_after(std::chrono::seconds(timeout));
 
-            page->buffers(&out, *guest, httpCode);
-            
-            // write lock
+            page->buffers(&out, guest, httpCode);
+                
             async_write(stream, asio::buffer(out), handleWrite);
         }
         
@@ -709,15 +708,16 @@ using enum Debug::Level;
         }
         
     public:
-        Guest *guest;
+        Guest& guest;
 
         HttpSession( asio::io_context& ioCtx
                    , asio::ip::tcp::socket&& sock
                    , std::atomic_int& connected
+                   , Page_base *page_base
                    , std::mutex& lock
                    , vector<Guest>& g
-                   , Page_base *page_base
-                   , Guest *newguest
+                   , AtomicBool& running_
+                   , Guest& newguest
                    )
           : ioContext(ioCtx)
           , stream(move(sock))
@@ -726,6 +726,7 @@ using enum Debug::Level;
           , page(page_base->createNew())
           , guests_lock(lock)
           , guests(g)
+          , running(running_)
           , guest(newguest)
         {}
         
@@ -733,10 +734,11 @@ using enum Debug::Level;
                    , asio::ip::tcp::socket&& sock
                    , asio::ssl::context& sslCtx
                    , std::atomic_int& connected
+                   , Page_base *page_base
                    , std::mutex& lock
                    , vector<Guest>& g
-                   , Page_base *page_base
-                   , Guest *newguest
+                   , AtomicBool& running_
+                   , Guest& newguest
                    )
           : ioContext(ioCtx)
           , stream(move(sock), sslCtx)
@@ -745,6 +747,7 @@ using enum Debug::Level;
           , page(page_base->createNew())
           , guests_lock(lock)
           , guests(g)
+          , running(running_)
           , guest(newguest)
         {}
 
@@ -759,7 +762,8 @@ using enum Debug::Level;
           , page(move(other.page))
           , guests_lock(other.guests_lock)
           , guests(other.guests)
-          , guest(move(other.guest))
+          , running(running)
+          , guest(std::exchange(other.guest, guest))
         {}
         
         HttpSession& operator=(HttpSession&&) = delete;
@@ -788,6 +792,7 @@ using enum Debug::Level;
             httpCode = 200;
             receivedHeader.clear();
             receivedBody.clear();
+            out.clear();
             page->reset();
         }
 
@@ -795,7 +800,7 @@ using enum Debug::Level;
         {
             // lock guard Todo: if this session gets destroyed before the connection is shut down we will get constant "broken pipe" errors!!!!
             nCurrentConnected -= 1;
-            //Debug::print(trace, DBGSTR("HttpSession::~HttpSession(): Connection closed. Remaining: "), nCurrentConnected.load(std::memory_order_relaxed));
+            Debug::print(trace, DBGSTR("HttpSession::~HttpSession(): Connection closed. Remaining: "), nCurrentConnected.load(std::memory_order_relaxed));
         }
     };
 
@@ -812,18 +817,27 @@ using enum Debug::Level;
         vector<Guest>    guests;
 
         std::atomic_int& nCurrentConnected;
+        
+        AtomicBool       running;
 
         TcpServerMembers(asio::io_context& ioCtx, std::atomic_int& connected)
           : ioContext(ioCtx)
           , acceptor(asio::make_strand(ioCtx))
           , nCurrentConnected(connected)
-        {}
+          , running(true)
+        {
+            for (int i=0; i<max_concurrent_users; ++i)
+            {
+                guests.emplace_back(&ioCtx);
+                guests.back().guestid = i;
+            }
+        }
     };
 
     template <class Sockettype, bool DoSSL>
     void doAccept_impl(TcpServer::TcpServerMembers *pTcpServerMembers, Page_base *page_base, asio::ssl::context *psslCtx=nullptr)
     {
-        if (!pTcpServerMembers->acceptor.is_open())
+        if (pTcpServerMembers->acceptor.is_open() == false)
             return;
 
         auto accept = [pTcpServerMembers, page_base, psslCtx](beast::error_code ec, asio::ip::tcp::socket sock)
@@ -831,21 +845,24 @@ using enum Debug::Level;
                           if (!ec)
                           {
                               // todo: block ip!
-                              Guest *newguest = [pTcpServerMembers]
+                              Guest *newguest = [pTcpServerMembers]() -> Guest *
                                                 {
                                                     const lock_guard<mutex> lock(pTcpServerMembers->guests_lock);
                                                     for (auto& guest : pTcpServerMembers->guests)
                                                     {
-                                                        if (guest.userid == 0)
+                                                        if (guest.guestid == 0)
                                                         {
-                                                            // Alternatively guests should assign their OWN userid (during 1st request!)
-                                                            guest.userid = (decltype(guest.userid))pcg64Rand();
+                                                            // Alternatively guests should assign their OWN guestid (during 1st request!)
+                                                            //guest.guestid = (decltype(guest.guestid))pcg64Rand();
                                                             return &guest;
                                                         }
                                                     }
-                                                    pTcpServerMembers->guests.emplace_back( &pTcpServerMembers->ioContext );
-                                                    return &pTcpServerMembers->guests.back();
+                                                    Debug::print(error, DBGSTR("TcpServer::doAccept_impl(): Out of guest slots!"));
+                                                    return nullptr;
                                                 }();
+                              
+                              if (!newguest)
+                                  return doAccept_impl<Sockettype, DoSSL>(pTcpServerMembers, page_base, psslCtx); // Try again later
                               
                               pTcpServerMembers->nCurrentConnected += 1;
                               shared_ptr<HttpSession<Sockettype>> spawn;
@@ -856,10 +873,11 @@ using enum Debug::Level;
                                                                               , move(sock)
                                                                               , *psslCtx
                                                                               , pTcpServerMembers->nCurrentConnected
+                                                                              , page_base
                                                                               , pTcpServerMembers->guests_lock
                                                                               , pTcpServerMembers->guests
-                                                                              , page_base
-                                                                              , newguest
+                                                                              , pTcpServerMembers->running
+                                                                              , *newguest
                                                                               );
                                   spawn->startSSL();
                               }
@@ -868,10 +886,11 @@ using enum Debug::Level;
                                   spawn = make_shared<HttpSession<Sockettype>>( pTcpServerMembers->ioContext
                                                                               , move(sock)
                                                                               , pTcpServerMembers->nCurrentConnected
+                                                                              , page_base
                                                                               , pTcpServerMembers->guests_lock
                                                                               , pTcpServerMembers->guests
-                                                                              , page_base
-                                                                              , newguest
+                                                                              , pTcpServerMembers->running
+                                                                              , *newguest
                                                                               );
                                   spawn->start();
                               }
@@ -986,6 +1005,7 @@ using enum Debug::Level;
     void TcpServer::shutdown()
     {
         pTcpServerMembers->acceptor.close();
+        pTcpServerMembers->running = false;
     }
 
     TcpServer::~TcpServer()
@@ -1033,18 +1053,18 @@ using enum Debug::Level;
     void TcpServerSSL::refreshSSL(const char *chain_file, const char *key_file, const char *dh_file)
     {
         // todo: to refresh a cert keep 2 copies and swap pointer bbtwn old/new!
-        pSSL_Container->sslCtx.set_password_callback([](std::size_t, asio::ssl::context_base::password_purpose)
-                                                     {
-                                                         return PROTECTED("blah");
-                                                     }
-                                                    );
+      //  pSSL_Container->sslCtx.set_password_callback([](std::size_t, asio::ssl::context_base::password_purpose)
+        //                                             {
+          //                                               return PROTECTED("blah");
+            //                                         }
+              //                                      );
         pSSL_Container->sslCtx.set_options( asio::ssl::context::default_workarounds
                                           | asio::ssl::context::no_sslv2
-                                          | asio::ssl::context::single_dh_use
+                //                          | asio::ssl::context::single_dh_use
                                           );
         pSSL_Container->sslCtx.use_certificate_chain_file(chain_file);
         pSSL_Container->sslCtx.use_private_key_file(key_file, asio::ssl::context::pem);
-        pSSL_Container->sslCtx.use_tmp_dh_file(dh_file);
+        //pSSL_Container->sslCtx.use_tmp_dh_file(dh_file);
     }
 
     TcpServerSSL::~TcpServerSSL()

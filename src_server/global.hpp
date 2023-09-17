@@ -3,6 +3,7 @@
 
 #include <boost/asio.hpp>
 #include <shared_mutex>
+#include <atomic>
 
 
 /*****************************************************************************/
@@ -38,6 +39,33 @@
         void makeAvail()
         {
             flag.clear(std::memory_order_release);
+        }
+    };
+
+
+    struct AtomicBool
+    {
+        std::atomic<bool> atomicBool;
+    
+        explicit AtomicBool(bool init)
+          : atomicBool(init)
+        {}
+    
+        void operator=(bool val)
+        {
+            // atomicBool.store(val, std::memory_order_acquire);
+            // atomicBool.store(val, std::memory_order_release);
+            atomicBool.store(val, std::memory_order_relaxed);
+        }
+    
+        bool operator==(const bool val) const
+        {
+            return atomicBool.load(std::memory_order_relaxed) == val;
+        }
+        
+        operator bool() const
+        {
+            return atomicBool.load(std::memory_order_relaxed);
         }
     };
 
@@ -264,53 +292,5 @@
 #else
   #error "double include"
 #endif // GLOBAL_HPP
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-
-#include <atomic>
-
-
-
-
-
-    struct AtomicBool
-    {
-        std::atomic<bool> atomicBool;
-    
-        explicit AtomicBool(bool init)
-          : atomicBool(init)
-        {}
-    
-        void operator=(bool val)
-        {
-            // atomicBool.store(val, std::memory_order_acquire);
-            // atomicBool.store(val, std::memory_order_release);
-            atomicBool.store(val, std::memory_order_relaxed);
-        }
-    
-        bool operator==(const bool val)
-        {
-            return atomicBool.load(std::memory_order_relaxed) == val;
-        }    
-    };
-
-    
-
-
-*/
 
 

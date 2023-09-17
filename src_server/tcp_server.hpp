@@ -11,11 +11,11 @@
         struct GuestMembers;
         GuestMembers *pGuestMembers;
 
-        unsigned    userid;
+        unsigned    guestid;
         bool        keepalive = false;
         bool        deflateSupported = false;
 
-        Guest(void *ioCtx);
+        explicit Guest(void *ioCtx);
 
         Guest(const Guest&) = delete;
         Guest& operator=(const Guest&) = delete;
@@ -41,7 +41,7 @@
         struct PageMembers;
         PageMembers *pPageMembers;
 
-        enum class Mime { HTML,CSS,JS,JSON,ICON,PNG,FLV,JPG,GIF,SVG };
+        enum class Mime { HTM,HTML,CSS,JS,JSON,ICON,PNG,FLV,JPG,JPEG,GIF,SVG };
     
     protected:
         virtual void placeChunk(void *) = 0;
@@ -79,7 +79,8 @@
     class TcpServer
     {
     public:
-        static constexpr int max_concurrent_connections = 1000;
+        static constexpr int max_concurrent_users = 1000;
+        static constexpr int max_concurrent_connections = max_concurrent_users * 6;
 
         struct TcpServerMembers;
         
