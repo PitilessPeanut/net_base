@@ -34,7 +34,11 @@
 /*****************************************************************************/
     class Page_base
     {
+    public:
+        enum Options : unsigned { CHUNKED=1 };
+        
     protected:
+        unsigned options = 0;
         bool sendHeader = true;
         bool done = false;
 
@@ -44,10 +48,14 @@
         enum class Mime { HTM,HTML,CSS,JS,JSON,ICON,PNG,FLV,JPG,JPEG,GIF,SVG };
     
     protected:
+        void enable(Options);
+        
+        void disable(Options);
+        
         virtual void placeChunk(void *) = 0;
 
         virtual Mime getType() const = 0;
-
+        
     public:
         Page_base();
         

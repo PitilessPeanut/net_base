@@ -92,8 +92,10 @@ using enum Debug::Level;
         ostringstream chunk;
         string staysAliveOutput;
     
-        void makeHttp200_OK()              { chunk << PROTECTED("HTTP/1.1 200 OK\r\n"); }
-        void makeHttp404_notFound()        { chunk << PROTECTED("HTTP/1.1 404 Not Found\r\n"); }
+        void makeHttp200_OK()                 { chunk << PROTECTED("HTTP/1.1 200 OK\r\n"); }
+        void makeHttp404_notFound()           { chunk << PROTECTED("HTTP/1.1 404 Not Found\r\n"); }
+        template <typename Int>
+        void makeContentLength(const Int len) { chunk << PROTECTED("Content-Length: ") << len << PROTECTED("\r\n"); }
         void makeChunked()                 { chunk << PROTECTED("Transfer-Encoding: chunked\r\n"); }
         void placeType(Page_base::Mime m)  { using enum Page_base::Mime;
                                              chunk << PROTECTED("Content-Type: ");
@@ -118,6 +120,7 @@ using enum Debug::Level;
         void placeKeepalive(const bool ka) { ka ? (chunk<<PROTECTED("Connection: keep-alive\r\n")) : (chunk<<PROTECTED("Connection: close\r\n")); } 
         void placeOnion(string_view onion) { chunk << PROTECTED("Onion-Location: ") << onion << PROTECTED("\r\n"); }
         void finishHeader()                { chunk << PROTECTED("\r\n"); }
+        void insertBody(string& body)      { chunk << body; }
         void insertBodyChunk(string& body) { chunk << std::hex << body.size() << PROTECTED("\r\n") << body << PROTECTED("\r\n"); }
         
         string getChunk()
@@ -136,41 +139,67 @@ using enum Debug::Level;
       : pPageMembers(new PageMembers(  ))
     {}
 
+    void Page_base::enable(Options opt)
+    {
+        options |= opt;
+    }
+    
+    void Page_base::disable(Options opt)
+    {
+        options &= ~opt;
+    }
+
     void Page_base::buffers(void *dst, const Guest& guest, const int httpStatus)
     {
         string& dst2 = *(string *)dst;
         string body;
         placeChunk(&body);
         
-        if (sendHeader)
-        {        
-            sendHeader = false;
-            done = false;
-            if (httpStatus == 200)
-                pPageMembers->makeHttp200_OK();
-            else if (httpStatus == 404)
-                pPageMembers->makeHttp404_notFound();
-            pPageMembers->makeChunked();
+        using enum Options;
+        if (options & CHUNKED)
+        {
+            if (sendHeader)
+            {
+                sendHeader = false;
+                done = false;
+                if (httpStatus == 200)
+                    pPageMembers->makeHttp200_OK();
+                else if (httpStatus == 404)
+                    pPageMembers->makeHttp404_notFound();
+                pPageMembers->makeChunked();
+                pPageMembers->placeType(getType());
+              //  pPageMembers->placeCookie(user);//todo
+                pPageMembers->placeKeepalive(guest.keepalive);
+              //  pPageMembers->placeXSSProtection();//todo
+                pPageMembers->finishHeader();
+                pPageMembers->insertBodyChunk(body);
+                string chk(pPageMembers->getChunk());
+                swap(dst2, chk);
+            }
+            else if (!body.empty())
+            {
+                pPageMembers->insertBodyChunk(body);
+                string chk(pPageMembers->getChunk());
+                swap(dst2, chk);
+            }
+            else
+            {
+                done = true;
+                sendHeader = true;
+                string chk(PROTECTED("0\r\n\r\n"));
+                swap(dst2, chk);
+            }
+        }
+        else // Not "chunked"
+        {
+            pPageMembers->makeHttp200_OK();
             pPageMembers->placeType(getType());
-          //  pPageMembers->placeCookie(user);//todo
             pPageMembers->placeKeepalive(guest.keepalive);
-          //  pPageMembers->placeXSSProtection();//todo
+            pPageMembers->makeContentLength(body.size());
             pPageMembers->finishHeader();
-            pPageMembers->insertBodyChunk(body);
+            
+            pPageMembers->insertBody(body);
             string chk(pPageMembers->getChunk());
-            swap(dst2, chk);
-        }
-        else if (!body.empty())
-        {
-            pPageMembers->insertBodyChunk(body);
-            string chk(pPageMembers->getChunk());
-            swap(dst2, chk);
-        }
-        else
-        {
-            done = true;
-            sendHeader = true;
-            string chk(PROTECTED("0\r\n\r\n"));
             swap(dst2, chk);
         }
     }
@@ -358,26 +387,27 @@ using enum Debug::Level;
     class HttpSession : public enable_shared_from_this<HttpSession<Sockettype>>
     {
     private:
-        asio::io_context&        ioContext;
-        Sockettype               stream; // Constructed via make_strand() no need to use strand::wrap all
-                                         // the time any more!
-        vector<char>             buffer; // TCP being a stream, block/buffer size has no influence over 
-                                         // the packets sent thru the network. Trying to guess the avarage 
-                                         // size of a packet: 4096
-        size_t                   totalReceived = 0, totalDelivered = 0; 
-        std::atomic_int&         nCurrentConnected;
-        bool                     body = false;
-        int                      endrequest = 0;
-        int                      headerLength = 0;
-        int                      bodyLength = -1;
-        int                      standby = 1;
-        int                      httpCode = 200;
-        string                   receivedHeader, receivedBody, out;
-        bool                     connectionclose = false;
-        unique_ptr<Page_base>    page;
-        std::mutex&              guests_lock;
-        vector<Guest>&           guests;
-        AtomicBool&              running;
+        asio::io_context&          ioContext;
+        Sockettype                 stream; // Constructed via make_strand() no need to use strand::wrap all
+                                           // the time any more!
+        vector<char>               buffer; // TCP being a stream, block/buffer size has no influence over
+                                           // the packets sent thru the network. Trying to guess the avarage
+                                           // size of a packet: 4096
+        const asio::ip::address    ipAddress;
+        size_t                     totalReceived = 0, totalDelivered = 0;
+        std::atomic_int&           nCurrentConnected;
+        bool                       body = false;
+        int                        endrequest = 0;
+        int                        headerLength = 0;
+        int                        bodyLength = -1;
+        int                        standby = 1;
+        int                        httpCode = 200;
+        string                     receivedHeader, receivedBody, out;
+        bool                       connectionclose = false;
+        unique_ptr<Page_base>      page;
+        std::mutex&                guests_lock;
+        vector<Guest>&             guests;
+        AtomicBool&                running;
 
         #ifdef STOPWATCH
           std::chrono::high_resolution_clock::time_point now;
@@ -446,6 +476,8 @@ using enum Debug::Level;
                                            return Debug::print( warning
                                                               , DBGSTR("HttpSession<Sockettype>::handshake() failed: ")
                                                               , ec.message().c_str()
+                                                              , DBGSTR(" Value: ")
+                                                              , ec.value()
                                                               );
                                        
                                        self->doReadSome();
@@ -469,12 +501,23 @@ using enum Debug::Level;
                                       return doClose(); // they closed
 
                                   const/*expr*/ bool timedOut = ec==asio::error::timed_out;
-                                  const/*expr*/ bool aborted = ec==asio::error::operation_aborted;
-                                  const/*expr*/ bool eof = ec==asio::error::eof;
-                                  if (ec && (!timedOut) && (!aborted) && (!eof))
+                                  //const/*expr*/ bool aborted = ec==asio::error::operation_aborted;
+                                  //const/*expr*/ auto timeout = 1;
+                                  //const/*expr*/ auto badFileDescriptor = 9;
+                                  const/*expr*/ auto resetByPeer = 104;
+                                  if (ec == asio::error::eof)       return doClose();
+                                  if (ec.value() == resetByPeer)    return doClose();
+                                  if (ec)
                                   {
                                       doClose();
-                                      return Debug::print(trace, DBGSTR("HttpSession::doReadSome(): "), ec.message().c_str());
+                                      return Debug::print( trace
+                                                         , DBGSTR("HttpSession::doReadSome(): ")
+                                                         , ec.message().c_str()
+                                                         , ". ip: "
+                                                         , ipAddress.to_string().c_str()
+                                                         , " Value: "
+                                                         , ec.value()
+                                                         );
                                   }
 
                                   using enum Method;
@@ -712,6 +755,7 @@ using enum Debug::Level;
 
         HttpSession( asio::io_context& ioCtx
                    , asio::ip::tcp::socket&& sock
+                   , const asio::ip::address ip
                    , std::atomic_int& connected
                    , Page_base *page_base
                    , std::mutex& lock
@@ -722,6 +766,7 @@ using enum Debug::Level;
           : ioContext(ioCtx)
           , stream(move(sock))
           , buffer(4096)
+          , ipAddress(ip)
           , nCurrentConnected(connected)
           , page(page_base->createNew())
           , guests_lock(lock)
@@ -732,6 +777,7 @@ using enum Debug::Level;
         
         HttpSession( asio::io_context& ioCtx
                    , asio::ip::tcp::socket&& sock
+                   , const asio::ip::address ip
                    , asio::ssl::context& sslCtx
                    , std::atomic_int& connected
                    , Page_base *page_base
@@ -743,6 +789,7 @@ using enum Debug::Level;
           : ioContext(ioCtx)
           , stream(move(sock), sslCtx)
           , buffer(4096)
+          , ipAddress(ip)
           , nCurrentConnected(connected)
           , page(page_base->createNew())
           , guests_lock(lock)
@@ -800,7 +847,7 @@ using enum Debug::Level;
         {
             // lock guard Todo: if this session gets destroyed before the connection is shut down we will get constant "broken pipe" errors!!!!
             nCurrentConnected -= 1;
-            Debug::print(trace, DBGSTR("HttpSession::~HttpSession(): Connection closed. Remaining: "), nCurrentConnected.load(std::memory_order_relaxed));
+            //Debug::print(trace, DBGSTR("HttpSession::~HttpSession(): Connection closed. Remaining: "), nCurrentConnected.load(std::memory_order_relaxed));
         }
     };
 
@@ -844,6 +891,7 @@ using enum Debug::Level;
                       {
                           if (!ec)
                           {
+                              const asio::ip::address ipAddress = sock.remote_endpoint().address();
                               // todo: block ip!
                               Guest *newguest = [pTcpServerMembers]() -> Guest *
                                                 {
@@ -851,11 +899,7 @@ using enum Debug::Level;
                                                     for (auto& guest : pTcpServerMembers->guests)
                                                     {
                                                         if (guest.guestid == 0)
-                                                        {
-                                                            // Alternatively guests should assign their OWN guestid (during 1st request!)
-                                                            //guest.guestid = (decltype(guest.guestid))pcg64Rand();
                                                             return &guest;
-                                                        }
                                                     }
                                                     Debug::print(error, DBGSTR("TcpServer::doAccept_impl(): Out of guest slots!"));
                                                     return nullptr;
@@ -871,6 +915,7 @@ using enum Debug::Level;
                               {
                                   spawn = make_shared<HttpSession<Sockettype>>( pTcpServerMembers->ioContext
                                                                               , move(sock)
+                                                                              , ipAddress
                                                                               , *psslCtx
                                                                               , pTcpServerMembers->nCurrentConnected
                                                                               , page_base
@@ -885,6 +930,7 @@ using enum Debug::Level;
                               {
                                   spawn = make_shared<HttpSession<Sockettype>>( pTcpServerMembers->ioContext
                                                                               , move(sock)
+                                                                              , ipAddress
                                                                               , pTcpServerMembers->nCurrentConnected
                                                                               , page_base
                                                                               , pTcpServerMembers->guests_lock
@@ -1052,19 +1098,23 @@ using enum Debug::Level;
 
     void TcpServerSSL::refreshSSL(const char *chain_file, const char *key_file, const char *dh_file)
     {
-        // todo: to refresh a cert keep 2 copies and swap pointer bbtwn old/new!
-      //  pSSL_Container->sslCtx.set_password_callback([](std::size_t, asio::ssl::context_base::password_purpose)
-        //                                             {
-          //                                               return PROTECTED("blah");
-            //                                         }
-              //                                      );
+        boost::ignore_unused(chain_file, key_file, dh_file);
+        pSSL_Container->sslCtx.set_password_callback([](std::size_t, asio::ssl::context_base::password_purpose)
+                                                     {
+                                                         return PROTECTED("blah");
+                                                     }
+                                                    );
         pSSL_Container->sslCtx.set_options( asio::ssl::context::default_workarounds
                                           | asio::ssl::context::no_sslv2
-                //                          | asio::ssl::context::single_dh_use
+        #if 0
+                                          | asio::ssl::context::single_dh_use
+        #endif
                                           );
         pSSL_Container->sslCtx.use_certificate_chain_file(chain_file);
         pSSL_Container->sslCtx.use_private_key_file(key_file, asio::ssl::context::pem);
-        //pSSL_Container->sslCtx.use_tmp_dh_file(dh_file);
+        #if 0
+          pSSL_Container->sslCtx.use_tmp_dh_file(dh_file);
+        #endif
     }
 
     TcpServerSSL::~TcpServerSSL()
