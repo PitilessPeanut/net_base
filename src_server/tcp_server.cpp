@@ -470,12 +470,18 @@ using enum Debug::Level;
                                        if (ec == asio::ssl::error::stream_truncated) // Don't print error when this happens
                                            return;
                                        
+                                       const/*expr*/ auto resetByPeer = 104;
+                                       if (ec.value() == resetByPeer)
+                                           return;
+                                       
                                        if (ec.value() == 167773206) // Self-signed cert, not an error!
                                            Debug::print(attention, "HttpSession<Sockettype>::handshake(): Unknown cert, ", ec.message().c_str());
                                        else if (ec)
-                                           return Debug::print( warning
+                                           return Debug::print( trace
                                                               , DBGSTR("HttpSession<Sockettype>::handshake() failed: ")
                                                               , ec.message().c_str()
+                                                              , ". ip: "
+                                                              , ipAddress.to_string().c_str()
                                                               , DBGSTR(" Value: ")
                                                               , ec.value()
                                                               );
@@ -497,16 +503,13 @@ using enum Debug::Level;
             shared_ptr<HttpSession<Sockettype>> self = this->shared_from_this();
             auto handleRead = [this, self](beast::error_code ec, size_t bytes_transferred)
                               {
-                                  if (ec == beast::http::error::end_of_stream)
-                                      return doClose(); // they closed
-
-                                  const/*expr*/ bool timedOut = ec==asio::error::timed_out;
-                                  //const/*expr*/ bool aborted = ec==asio::error::operation_aborted;
-                                  //const/*expr*/ auto timeout = 1;
-                                  //const/*expr*/ auto badFileDescriptor = 9;
-                                  const/*expr*/ auto resetByPeer = 104;
-                                  if (ec == asio::error::eof)       return doClose();
-                                  if (ec.value() == resetByPeer)    return doClose();
+                                  const/*expr*/ bool timedOut        = ec==asio::error::timed_out;
+                                  const/*expr*/ auto resetByPeer     = 104;
+                                  const/*expr*/ auto streamTruncated = 1;
+                                  if (ec == beast::http::error::end_of_stream)    return doClose(); // they closed
+                                  if (ec == asio::error::eof)                     return doClose();
+                                  if (ec.value() == resetByPeer)                  return doClose();
+                                  if (ec.value() == streamTruncated)              return doClose(); // See above ^
                                   if (ec)
                                   {
                                       doClose();
