@@ -158,7 +158,7 @@ using enum Debug::Level;
         using enum Options;
         if (options & CHUNKED)
         {
-            if (sendHeader)
+            if (sendHeader && !body.empty())
             {
                 sendHeader = false;
                 done = false;
