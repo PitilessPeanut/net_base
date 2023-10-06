@@ -18,6 +18,8 @@ workspace project_name
                 warnings "extra"
                 files { "../src/*.cpp",
                         "../src/*.hpp",
+                        "../src_impl/*.cpp",
+                        "../src_impl/*.hpp"
                       }
                 targetdir "../"
 
