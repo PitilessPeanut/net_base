@@ -25,7 +25,7 @@ typedef std::int_fast8_t   i8;
 #if defined(USE_BOOST)
   #include <boost/core/ignore_unused.hpp>
 #else
-  #include "../deps/boost/ignore_unused.hpp"
+  #include "../deps/boost_1_82_0/boost/ignore_unused.hpp"
 #endif
 
 
