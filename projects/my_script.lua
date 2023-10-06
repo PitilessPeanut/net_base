@@ -1,12 +1,14 @@
 -- Invoke: ./premake5 --file=../premake5.lua --os=ios xcode4
 
+include "../src_impl/project_config.lua"
+
 protect_strings = "DO_PROTECT_STRINGS=1"
 remove_strings =  "DO_REMOVE_STRINGS=0"
 
-workspace "Gaem"
+workspace project_name
         configurations { "Debug", "Release" }
         architecture "x86_64"
-        project "Gaem"
+        project project_name
                 language "c++"
                 --kind "ConsoleApp"
                 kind "WindowedApp"
