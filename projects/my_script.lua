@@ -1,14 +1,12 @@
 -- Invoke: ./premake5 --file=../premake5.lua --os=ios xcode4
 
-include "../src_impl/project_config.lua"
-
 protect_strings = "DO_PROTECT_STRINGS=1"
 remove_strings =  "DO_REMOVE_STRINGS=0"
 
-workspace project_name
+workspace "bot"
         configurations { "Debug", "Release" }
         architecture "x86_64"
-        project project_name
+        project "bot"
                 language "c++"
                 --kind "ConsoleApp"
                 kind "WindowedApp"
@@ -29,7 +27,7 @@ workspace project_name
 
                 filter { "system:windows", "action:vs*" }
                         --systemversion(os.winSdkVersion() .. ".0") 
-                        exceptionhandling "Off"     
+                        --exceptionhandling "Off"     
                         buildoptions { "/fp:fast" }
                         defines { "_CRT_SECURE_NO_WARNINGS", 
                                   "_CRT_NONSTDC_NO_WARNINGS",

@@ -24,7 +24,7 @@
         // Calculate output function (XSH RR), uses old state for max ILP:
         const u32 xorshifted = u32(((oldstate >> 18u) ^ oldstate) >> 27u);
         const u32 rot = oldstate >> 59u;
-        return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+        return (xorshifted >> rot) | (xorshifted << ((~rot) & 31));
     }
 
     u32 pcg64Rand(const u64 seed)
