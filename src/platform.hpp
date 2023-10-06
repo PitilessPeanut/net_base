@@ -22,7 +22,7 @@ typedef std::int_fast8_t   i8;
 #endif
 // xcode: User header search path
 // vs: properties->VC++ Directories->Include Directories
-#include "../libs/boost/ignore_unused.hpp"
+#include "../deps/boost/ignore_unused.hpp"
 
 
 /****************************************/

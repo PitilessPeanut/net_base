@@ -8,16 +8,14 @@ workspace "Gaem"
         architecture "x86_64"
         project "Gaem"
                 language "c++"
-                kind "ConsoleApp"
-                --kind "WindowedApp"
+                --kind "ConsoleApp"
+                kind "WindowedApp"
                 toolset "gcc" --"clang"
                 cppdialect "C++20"
                 rtti "Off"
                 warnings "extra"
-            --    files { "../src/*.cpp",
-            --            "../src/*.hpp",
-            --            "../src/games/*.cpp",
-            --            "../src/games/*.hpp"
+                files { "../src/*.cpp",
+                        "../src/*.hpp",
                       }
                 targetdir "../"
 
@@ -34,7 +32,9 @@ workspace "Gaem"
                                   protect_strings,
                                   remove_strings
                                 }
-                        files { "../src_win/init.cpp" }
+                        files { "../src_win/*.cpp",
+                                "../src_win/*.hpp"
+                              }
                         location "../build_win"
 
 

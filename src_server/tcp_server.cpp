@@ -149,6 +149,11 @@ using enum Debug::Level;
         options &= ~opt;
     }
 
+    bool Page_base::delivered() const
+    {
+        return chunksDone;
+    }
+
     void Page_base::buffers(void *dst, const Guest& guest, const int httpStatus)
     {
         string& dst2 = *(string *)dst;
@@ -161,7 +166,6 @@ using enum Debug::Level;
             if (sendHeader && !body.empty())
             {
                 sendHeader = false;
-                done = false;
                 if (httpStatus == 200)
                     pPageMembers->makeHttp200_OK();
                 else if (httpStatus == 404)
@@ -184,7 +188,6 @@ using enum Debug::Level;
             }
             else
             {
-                done = true;
                 sendHeader = true;
                 string chk(PROTECTED("0\r\n\r\n"));
                 swap(dst2, chk);

@@ -40,7 +40,7 @@
     protected:
         unsigned options = 0;
         bool sendHeader = true;
-        bool done = false;
+        bool chunksDone = false;
 
         struct PageMembers;
         PageMembers *pPageMembers;
@@ -62,7 +62,7 @@
         Page_base(const Page_base&) = delete;
         Page_base& operator=(const Page_base&) = delete;
 
-        virtual bool findRequestedPage(const char *, int) = 0;
+        virtual bool findRequestedPage(const char *, int) = 0; // todo should return status, not bool
 
         virtual void submitBody(const char *, int) = 0;
         
@@ -70,7 +70,7 @@
 
         bool maxLenExceeded(int) const {return false;}//todo
 
-        virtual bool delivered() const = 0;
+        bool delivered() const;
 
         void buffers(void *, const Guest&, const int httpStatus);
 
