@@ -3,13 +3,13 @@
 protect_strings = "DO_PROTECT_STRINGS=1"
 remove_strings =  "DO_REMOVE_STRINGS=0"
 
-workspace "bot"
+workspace "net_base"
         configurations { "Debug", "Release" }
         architecture "x86_64"
-        project "bot"
+        project "bot_base"
                 language "c++"
-                --kind "ConsoleApp"
-                kind "WindowedApp"
+                kind "ConsoleApp"
+                --kind "WindowedApp"
                 toolset "gcc" --"clang"
                 cppdialect "C++20"
                 rtti "Off"
@@ -25,11 +25,12 @@ workspace "bot"
 
 
 
+
                 filter { "system:windows", "action:vs*" }
-                        --systemversion(os.winSdkVersion() .. ".0") 
-                        --exceptionhandling "Off"     
+                        --systemversion(os.winSdkVersion() .. ".0")
+                        --exceptionhandling "Off"
                         buildoptions { "/fp:fast" }
-                        defines { "_CRT_SECURE_NO_WARNINGS", 
+                        defines { "_CRT_SECURE_NO_WARNINGS",
                                   "_CRT_NONSTDC_NO_WARNINGS",
                                   protect_strings,
                                   remove_strings
@@ -42,16 +43,22 @@ workspace "bot"
 
 
 
+
+
                 nix_buildoption_ignoreNaN = "-ffinite-math-only"
-                nix_buildoption_addAddressSanitize = "-fsanitize=address" -- "undefined reference"
+                nix_buildoption_addAddressSanitize = "-fsanitize=address" -- dynamic bounds check "undefined reference"
                 nix_buildoption_utf8compiler = "-finput-charset=UTF-8 -fexec-charset=UTF-8 -fextended-identifiers"
                 nix_buildoption_fatal = "-Wfatal-errors" -- make gcc output bearable
-                        
+                nix_buildoption_shadow = "-Wshadow-compatible-local"
+                nix_buildoption_impl_fallthrough = "-Wimplicit-fallthrough" -- warn missing [[fallthrough]]
+                nix_buildoption_undef = "-Wundef" -- Macros must be defined
+
                 filter { "system:ios" }
                         exceptionhandling "Off"
                         buildoptions { "-ffast-math"
                                      , "-pedantic"
                                      , nix_buildoption_fatal
+                                     , nix_buildoption_shadow
                                      }
                         defines { protect_strings,
                                   remove_strings
@@ -62,6 +69,11 @@ workspace "bot"
                                     }
                         location "../build_ios"
 
+                filter {} -- "deactivate"
+
+
+
+
 
 
                 filter { "system:linux" }
@@ -70,6 +82,9 @@ workspace "bot"
                                      , "-ffast-math"
                                      , nix_buildoption_utf8compiler
                                      , nix_buildoption_fatal
+                                     , nix_buildoption_shadow
+                                     , nix_buildoption_impl_fallthrough
+                                     , nix_buildoption_undef
                                      }
                         defines { protect_strings,
                                   remove_strings
