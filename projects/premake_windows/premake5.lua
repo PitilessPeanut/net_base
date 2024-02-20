@@ -1,1 +1,1 @@
-include "../my_script.lua"
+include "../build_net.lua"
