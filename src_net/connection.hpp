@@ -8,7 +8,7 @@
     class Pool
     {          
     public:
-        enum class Method {GET,POST,PUT,DELETE,HEAD};
+        enum class Method {GET,POST,PUT,DLETE,HEAD};
 
         enum class Format {TEXT,JSON};
         

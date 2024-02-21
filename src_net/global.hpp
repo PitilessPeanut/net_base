@@ -71,6 +71,26 @@
 
 
 /*****************************************************************************/
+/*                     shared_ptr wrapper to prevent non-const member access */
+/*****************************************************************************/
+    template <class T>
+    class SharedPtr
+    {
+    private:
+        std::shared_ptr<T> ptr;
+        
+    public:
+        explicit SharedPtr(std::shared_ptr<T> newPtr)
+          : ptr(newPtr)
+        {}
+        
+        T* operator->() const noexcept { return ptr.get(); }
+        
+        T& operator*() const noexcept { return *ptr.get(); }
+    };
+
+
+/*****************************************************************************/
 /*                                                                  Director */ 
 /*****************************************************************************/
     /****************************************/
@@ -114,7 +134,7 @@
         Ownertype *owner;
         Node<Ownertype> *prev;
         Node<Ownertype> *next;
-        Circular<Ownertype> *list;
+        Circular<Ownertype> *list = nullptr;
     };
 
 
@@ -171,14 +191,14 @@
     /****************************************/
     struct Task
     {
-        std::shared_ptr<boost::asio::deadline_timer> timer;
+        SharedPtr<boost::asio::deadline_timer> timer;
 
         Node<Task> node;
         
         const unsigned taskid;
 
         Task( Circular<Task>& tasks
-            , std::shared_ptr<boost::asio::deadline_timer> t
+            , SharedPtr<boost::asio::deadline_timer> t
             , const unsigned id
             )
           : timer(t)
@@ -218,12 +238,12 @@
         Director(const Director&) = delete;
         Director& operator=(const Director&) = delete;
     
-        unsigned submitTask(const auto cntdwnMilliSecs, std::shared_ptr<std::function<void()>> dispatch)
+        unsigned submitTask(const auto cntdwnMilliSecs, SharedPtr<std::function<void()>> dispatch)
         {
             using DeadlineTimer = boost::asio::deadline_timer;
-            std::shared_ptr<DeadlineTimer> timer = std::make_shared<DeadlineTimer>(ioContext, boost::posix_time::milliseconds(cntdwnMilliSecs));
+            SharedPtr<DeadlineTimer> timer(std::make_shared<DeadlineTimer>(ioContext, boost::posix_time::milliseconds(cntdwnMilliSecs)));
 
-            std::shared_ptr<Task> task = std::make_shared<Task>(circular, timer, taskid);
+            SharedPtr<Task> task(std::make_shared<Task>(circular, timer, taskid));
            
             timer->async_wait([dispatch, timer, task](const boost::system::error_code ec)
                               {

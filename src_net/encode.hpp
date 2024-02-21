@@ -7,7 +7,7 @@
     typedef unsigned long long enc_u64;
     typedef unsigned           enc_u32;
     typedef unsigned char      enc_u8;
-    constexpr unsigned enc_charbits = []{ return 32u / sizeof(enc_u32); }();
+    constexpr unsigned enc_charbits = []{ return 32u / (unsigned)sizeof(enc_u32); }();
     static_assert([]{ constexpr enc_u64 x = ~0ull; return x>>63; }());
     static_assert([]{ constexpr enc_u32 x = ~0u; return x>>31; }());
     static_assert(sizeof(enc_u64)*enc_charbits == 64);

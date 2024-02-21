@@ -1,6 +1,13 @@
 #include "encode.hpp"
 #include <immintrin.h>
 
+#ifdef _WIN32
+  #include <cstring>
+  #define myMemcpy(dst, src, sz) std::memcpy(dst, src, sz) 
+#else
+  #define myMemcpy(dst, src, sz) __builtin_memcpy(dst, src, sz)
+#endif
+
 
 /****************************************/
 /*                            meow_hash */
@@ -37,7 +44,7 @@
         size_t rest = len % 16;
     
         char temp[16] = {0};
-        const void *dst = __builtin_memcpy((unsigned char *)temp, str, rest);
+        const void *dst = myMemcpy((unsigned char *)temp, str, rest);
         (void)dst;
         __m128i in = _mm_loadu_si128((__m128i *)temp);
         in = _mm_and_si128(in, _mm_loadu_si128((const __m128i *)(restMask + 16 - rest)));
